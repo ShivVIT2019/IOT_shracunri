@@ -1,0 +1,10 @@
+Next Steps – I will start from tomorrow – Day – 2 – 19-11-2024
+
+•	Test the Buttons:
+•	Click the Unlock and Lock buttons to ensure they update the status dynamically. The status should change between "Locked" and "Unlocked."
+•	Add Real-Time Alert Simulation:
+•	Extend the logic to trigger alerts (you can simulate this by setting the alert value in the backend).
+•	Enhance the UI:
+•	You can improve the appearance by adding more styling to style.css (e.g., background color, button designs, fonts).
+•	Integrate LoRa Communication:
+•	If you're ready to connect this with LoRa – ( Update from Shreyas and Niraj)
