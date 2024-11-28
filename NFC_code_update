@@ -1,0 +1,180 @@
+#include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/drivers/uart.h>
+#include <nfc_t2t_lib.h>
+#include <nfc/ndef/msg.h>
+#include <nfc/ndef/text_rec.h>
+#include <dk_buttons_and_leds.h>
+
+#define MAX_REC_COUNT        1
+#define NDEF_MSG_BUF_SIZE    128
+#define NFC_FIELD_LED        DK_LED1
+
+typedef enum {
+    STATE_LOCKED,
+    STATE_UNLOCKED
+} system_state_t;
+
+static system_state_t current_state = STATE_LOCKED; // Initial state
+const struct device *uart_dev;
+static uint8_t ndef_msg_buf[NDEF_MSG_BUF_SIZE]; // Buffer for NFC messages
+
+/* Text messages for LOCKED and UNLOCKED states */
+static const uint8_t locked_payload[] = {'B', 'i', 'k', 'e', ' ', 'L', 'o', 'c', 'k', 'e', 'd'};
+static const uint8_t unlocked_payload[] = {'B', 'i', 'k', 'e', ' ', 'U', 'n', 'l', 'o', 'c', 'k', 'e', 'd'};
+static const uint8_t en_code[] = {'e', 'n'};
+
+/* Function to toggle state */
+void toggle_state() {
+    if (current_state == STATE_LOCKED) {
+        current_state = STATE_UNLOCKED;
+    } else {
+        current_state = STATE_LOCKED;
+    }
+}
+
+/* Function to send state information via UART */
+void send_state_to_lora(system_state_t state) {
+    char *msg;
+
+    if (state == STATE_LOCKED) {
+        msg = "STATE:LOCKED\n";
+    } else {
+        msg = "STATE:UNLOCKED\n";
+    }
+
+    for (size_t i = 0; msg[i] != '\0'; i++) {
+        uart_poll_out(uart_dev, msg[i]);
+    }
+
+    printk("Sent state: %s", msg);
+}
+
+/* Function to encode NFC message based on current state */
+static int encode_nfc_message(uint8_t *buffer, uint32_t *len) {
+    int err;
+
+    /* Clear the buffer */
+    memset(buffer, 0, NDEF_MSG_BUF_SIZE);
+
+    if (current_state == STATE_LOCKED) {
+        NFC_NDEF_TEXT_RECORD_DESC_DEF(nfc_text_rec, UTF_8, en_code, sizeof(en_code), locked_payload, sizeof(locked_payload));
+        NFC_NDEF_MSG_DEF(nfc_text_msg, MAX_REC_COUNT);
+
+        err = nfc_ndef_msg_record_add(&NFC_NDEF_MSG(nfc_text_msg), &NFC_NDEF_TEXT_RECORD_DESC(nfc_text_rec));
+        if (err < 0) {
+            printk("Cannot add LOCKED record!\n");
+            return err;
+        }
+
+        err = nfc_ndef_msg_encode(&NFC_NDEF_MSG(nfc_text_msg), buffer, len);
+    } else {
+        NFC_NDEF_TEXT_RECORD_DESC_DEF(nfc_text_rec, UTF_8, en_code, sizeof(en_code), unlocked_payload, sizeof(unlocked_payload));
+        NFC_NDEF_MSG_DEF(nfc_text_msg, MAX_REC_COUNT);
+
+        err = nfc_ndef_msg_record_add(&NFC_NDEF_MSG(nfc_text_msg), &NFC_NDEF_TEXT_RECORD_DESC(nfc_text_rec));
+        if (err < 0) {
+            printk("Cannot add UNLOCKED record!\n");
+            return err;
+        }
+
+        err = nfc_ndef_msg_encode(&NFC_NDEF_MSG(nfc_text_msg), buffer, len);
+    }
+
+    if (err < 0) {
+        printk("Cannot encode NFC message!\n");
+    }
+
+    return err;
+}
+
+/* NFC callback function */
+static void nfc_callback(void *context, nfc_t2t_event_t event, const uint8_t *data, size_t data_length) {
+    ARG_UNUSED(context);
+    ARG_UNUSED(data);
+    ARG_UNUSED(data_length);
+
+    uint32_t len = sizeof(ndef_msg_buf);
+
+    switch (event) {
+        case NFC_T2T_EVENT_FIELD_ON:
+            dk_set_led_on(NFC_FIELD_LED); // Turn on LED when NFC field is detected
+            toggle_state(); // Toggle the state on NFC scan
+            send_state_to_lora(current_state); // Send updated state via UART
+            
+            // Dynamically re-encode the NFC message based on the new state
+            if (encode_nfc_message(ndef_msg_buf, &len) < 0) {
+                printk("Failed to encode updated NFC message\n");
+            } else if (nfc_t2t_payload_set(ndef_msg_buf, len) < 0) {
+                printk("Failed to set updated NFC payload\n");
+            } else {
+                printk("NFC payload updated to reflect new state\n");
+            }
+            break;
+
+        case NFC_T2T_EVENT_FIELD_OFF:
+            dk_set_led_off(NFC_FIELD_LED); // Turn off LED when NFC field is removed
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* UART initialization */
+void uart_init(void) {
+    uart_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
+    if (!device_is_ready(uart_dev)) {
+        printk("UART device not found!\n");
+    } else {
+        printk("UART initialized successfully.\n");
+    }
+}
+
+/* Main function */
+int main(void) {
+    uint32_t len = sizeof(ndef_msg_buf);
+
+    printk("Starting Smart Bicycle Theft Prevention System\n");
+
+    /* Initialize LEDs */
+    if (dk_leds_init() < 0) {
+        printk("Failed to initialize LEDs!\n");
+        return -1;
+    }
+
+    /* Initialize UART */
+    uart_init();
+
+    /* Set up NFC */
+    if (nfc_t2t_setup(nfc_callback, NULL) < 0) {
+        printk("Cannot setup NFC T2T library!\n");
+        return -1;
+    }
+
+    /* Encode initial NFC message */
+    if (encode_nfc_message(ndef_msg_buf, &len) < 0) {
+        printk("Cannot encode initial NFC message!\n");
+        return -1;
+    }
+
+    /* Set NFC payload */
+    if (nfc_t2t_payload_set(ndef_msg_buf, len) < 0) {
+        printk("Cannot set NFC payload!\n");
+        return -1;
+    }
+
+    /* Start NFC field sensing */
+    if (nfc_t2t_emulation_start() < 0) {
+        printk("Cannot start NFC field sensing!\n");
+        return -1;
+    }
+
+    printk("NFC setup complete. Waiting for NFC scan...\n");
+
+    while (1) {
+        k_sleep(K_SECONDS(1)); // Keep the system running
+    }
+
+    return 0;
+}
