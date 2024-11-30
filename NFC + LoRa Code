@@ -1,0 +1,85 @@
+#include <lmic.h>      // LMIC library for LoRa
+#include <hal/hal.h>   // HAL library
+#include <SPI.h>       // SPI library
+#include <Arduino.h>   // Arduino core library
+#include <NFC.h>       // Replace with your NFC library
+
+// TTN credentials
+static const u1_t DevEUI[8] = {0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x06, 0xB7, 0xD3};
+static const u1_t AppEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04};
+static const u1_t AppKey[16] = {0xC0, 0x36, 0x17, 0x85, 0xD2, 0x1A, 0xE7, 0xC8, 0x3D, 0xFE, 0x1C, 0x27, 0xCA, 0x68, 0x34, 0x78};
+
+// State definitions
+#define LOCKED 0
+#define UNLOCKED 1
+int current_state = LOCKED;
+
+// Provide DevEUI, AppEUI, AppKey to LMIC
+void os_getDevEui(u1_t *buf) { memcpy_P(buf, DevEUI, 8); }
+void os_getArtEui(u1_t *buf) { memcpy_P(buf, AppEUI, 8); }
+void os_getDevKey(u1_t *buf) { memcpy_P(buf, AppKey, 16); }
+
+// LoRa pin mapping
+const lmic_pinmap lmic_pins = {
+    .nss = 18,
+    .rxtx = LMIC_UNUSED_PIN,
+    .rst = 14,
+    .dio = {26, 35, 34}
+};
+
+// Function to handle NFC authentication
+void handleNFCAccess() {
+    if (NFC_authenticated()) { // Replace with actual NFC authentication logic
+        // Toggle the state based on current state
+        current_state = (current_state == LOCKED) ? UNLOCKED : LOCKED;
+
+        // Handle state actions
+        if (current_state == LOCKED) {
+            Serial.println("State: LOCKED");
+            LMIC_setTxData2(1, (uint8_t *)"LOCKED", 6, 0); // Send LOCKED state
+        } else {
+            Serial.println("State: UNLOCKED");
+            LMIC_setTxData2(1, (uint8_t *)"UNLOCKED", 8, 0); // Send UNLOCKED state
+        }
+    } else {
+        Serial.println("Unauthorized NFC attempt detected!");
+        LMIC_setTxData2(1, (uint8_t *)"ALERT", 5, 0); // Send ALERT state
+    }
+}
+
+// Handle LMIC events
+void onEvent(ev_t ev) {
+    switch (ev) {
+        case EV_TXCOMPLETE:
+            Serial.println("LoRa message sent!");
+            if (LMIC.txrxFlags & TXRX_ACK)
+                Serial.println("ACK received");
+            break;
+        default:
+            Serial.print("Event: ");
+            Serial.println((unsigned)ev);
+            break;
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Starting NFC + LoRa System...");
+
+    // Initialize NFC module
+    NFC_init(); // Replace with your NFC initialization function
+
+    // Initialize LoRa
+    os_init();
+    LMIC_reset();
+    LMIC_setDrTxpow(DR_SF7, 14); // Data rate and transmit power
+}
+
+void loop() {
+    os_runloop_once(); // Handle LoRa tasks
+
+    // Check for NFC access
+    if (NFC_detected()) { // Replace with actual NFC detection function
+        handleNFCAccess();
+    }
+}
