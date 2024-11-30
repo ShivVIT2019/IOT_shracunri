@@ -1,0 +1,104 @@
+#include <lmic.h>      // Include LMIC library
+#include <hal/hal.h>   // Include HAL library
+#include <SPI.h>       // Include SPI library
+#include <Arduino.h>   // Include Arduino core library for Serial, millis, etc.
+
+// TTN credentials
+static const u1_t DevEUI[8] = {0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x06, 0xB7, 0xD3}; // Replace with your Device EUI
+static const u1_t AppEUI[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04}; // Replace with your Application EUI
+static const u1_t AppKey[16] = {0xC0, 0x36, 0x17, 0x85, 0xD2, 0x1A, 0xE7, 0xC8, 0x3D, 0xFE, 0x1C, 0x27, 0xCA, 0x68, 0x34, 0x78}; // Replace with your Application Key
+
+// Provide DevEUI, AppEUI, and AppKey to LMIC
+void os_getDevEui(u1_t *buf) {
+    memcpy_P(buf, DevEUI, 8); // Copy Device EUI
+}
+
+void os_getArtEui(u1_t *buf) {
+    memcpy_P(buf, AppEUI, 8); // Copy Application EUI
+}
+
+void os_getDevKey(u1_t *buf) {
+    memcpy_P(buf, AppKey, 16); // Copy Application Key
+}
+
+// Pin mapping for Heltec WiFi LoRa 32
+const lmic_pinmap lmic_pins = {
+    .nss = 18,
+    .rxtx = LMIC_UNUSED_PIN,
+    .rst = 14,
+    .dio = {26, 35, 34} // DIO0, DIO1, DIO2
+};
+
+// Define states
+#define LOCKED 0
+#define UNLOCKED 1
+int current_state = LOCKED; // Initial state
+
+// Handle state changes
+void handleStateChange() {
+    if (current_state == LOCKED) {
+        Serial.println("Device is LOCKED");
+        // Transmit LOCKED state over LoRa
+        LMIC_setTxData2(1, (uint8_t *)"LOCKED", 6, 0);
+    } else if (current_state == UNLOCKED) {
+        Serial.println("Device is UNLOCKED");
+        // Transmit UNLOCKED state over LoRa
+        LMIC_setTxData2(1, (uint8_t *)"UNLOCKED", 8, 0);
+    }
+}
+
+// Toggle states
+void toggleState() {
+    current_state = (current_state == LOCKED) ? UNLOCKED : LOCKED;
+    handleStateChange();
+}
+
+// Function to send alert message
+void sendAlert() {
+    static uint8_t mydata[] = "Alert: Bike Security Breach!";
+    LMIC_setTxData2(1, mydata, sizeof(mydata) - 1, 0);
+    Serial.println("Alert message queued!");
+}
+
+// Handle LMIC events
+void onEvent(ev_t ev) {
+    switch (ev) {
+        case EV_TXCOMPLETE:
+            Serial.println("Message sent successfully!");
+            if (LMIC.txrxFlags & TXRX_ACK)
+                Serial.println("ACK received");
+            if (LMIC.dataLen) {
+                Serial.println("Received data:");
+                Serial.write(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
+                Serial.println();
+            }
+            break;
+        default:
+            Serial.print("Event: ");
+            Serial.println((unsigned)ev);
+            break;
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Starting LoRa State Handler...");
+
+    // Initialize LMIC
+    os_init();
+    LMIC_reset();
+
+    // Set LoRa parameters
+    LMIC_setDrTxpow(DR_SF7, 14); // Data rate and transmit power
+    Serial.println("Setup complete!");
+}
+
+void loop() {
+    os_runloop_once(); // Run LoRa tasks
+
+    static unsigned long lastAction = 0;
+    if (millis() - lastAction > 10000) { // 10-second interval
+        toggleState(); // Change state
+        lastAction = millis();
+    }
+}
