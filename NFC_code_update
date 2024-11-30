@@ -175,6 +175,7 @@ int main(void) {
         return -1;
     }
 
+
     /* Set NFC payload */
     if (nfc_t2t_payload_set(ndef_msg_buf, len) < 0) {
         printk("Cannot set NFC payload!\n");
