@@ -24,12 +24,13 @@ static uint8_t ndef_msg_buf[NDEF_MSG_BUF_SIZE]; // Buffer for NFC messages
 static double current_latitude = 42.089654;
 static double current_longitude = -75.970346;
 
-/* Function to get current date and time */
+/* Function to get current date and time (using Zephyr time API) */
 void get_current_datetime(char *datetime_buf, size_t buf_size) {
+    uint32_t now_ms = k_uptime_get();  // Get time in milliseconds
     struct tm timeinfo;
-    time_t now = time(NULL);
+    time_t now = (time_t)(now_ms / 1000);  // Convert ms to seconds
 
-    gmtime_r(&now, &timeinfo);
+    gmtime_r(&now, &timeinfo);  // Get the UTC time
     snprintf(datetime_buf, buf_size, "%02d/%02d/%04d %02d:%02d:%02d",
              timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year + 1900,
              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
@@ -174,7 +175,6 @@ int main(void) {
         printk("Cannot encode initial NFC message!\n");
         return -1;
     }
-
 
     /* Set NFC payload */
     if (nfc_t2t_payload_set(ndef_msg_buf, len) < 0) {
